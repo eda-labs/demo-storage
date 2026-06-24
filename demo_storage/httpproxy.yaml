@@ -1,0 +1,8 @@
+apiVersion: core.eda.nokia.com/v1
+kind: HttpProxy
+metadata:
+  name: demo-server
+  namespace: "${EDA_BASE_NAMESPACE}" # eda-set: ${EDA_BASE_NAMESPACE}
+spec:
+  authType: atDestination
+  rootUrl: "http://demo-server.${EDA_BASE_NAMESPACE}.svc.cluster.local:8080/" # eda-set: http://demo-server.${EDA_BASE_NAMESPACE}.svc.cluster.local:8080/

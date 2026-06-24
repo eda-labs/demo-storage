@@ -1,0 +1,179 @@
+apiVersion: v1
+data:
+  http_server.py: |
+    # Based on https://gist.github.com/mildred/67d22d7289ae8f16cae7
+
+    import argparse
+    import http.server
+
+    class HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def do_PUT(self):
+            try:
+                path = self.translate_path(self.path)
+                if path.endswith('/'):
+                    self.send_response(405, "Method Not Allowed")
+                    self.end_headers()
+                    self.wfile.write("PUT not allowed on a directory\n".encode())
+                else:
+                    # Don't support folders as we don't know where it is hosted from (e.g., HTTPProxy)
+                    path = path.rsplit("/", 1)[-1]
+                    length = int(self.headers['Content-Length'])
+                    with open(path, 'wb') as f:
+                        f.write(self.rfile.read(length))
+                    self.send_response(201, "Created")
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+            except Exception as e:
+                self.send_error(500, f"Error: {str(e)}")
+                raise
+
+    if __name__ == '__main__':
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--port', action='store',
+                            default=8080, type=int,
+                            help='Specify port to host HTTP server on')
+        args = parser.parse_args()
+
+        http.server.test(HandlerClass=HTTPRequestHandler, port=args.port, bind="0.0.0.0")
+  upload.html: "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"UTF-8\">\n    <meta
+    name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>File
+    Upload</title>\n    <style>\n        * {\n            margin: 0;\n            padding:
+    0;\n            box-sizing: border-box;\n        }\n\n        body {\n            font-family:
+    'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;\n            background: linear-gradient(135deg,
+    #667eea 0%, #764ba2 100%);\n            min-height: 100vh;\n            display:
+    flex;\n            justify-content: center;\n            align-items: center;\n
+    \           padding: 20px;\n        }\n\n        .container {\n            background:
+    white;\n            border-radius: 20px;\n            box-shadow: 0 20px 60px
+    rgba(0, 0, 0, 0.3);\n            padding: 40px;\n            max-width: 500px;\n
+    \           width: 100%;\n            animation: slideIn 0.5s ease-out;\n        }\n\n
+    \       @keyframes slideIn {\n            from {\n                opacity: 0;\n
+    \               transform: translateY(-30px);\n            }\n            to {\n
+    \               opacity: 1;\n                transform: translateY(0);\n            }\n
+    \       }\n\n        h1 {\n            color: #333;\n            text-align: center;\n
+    \           margin-bottom: 30px;\n            font-size: 2em;\n            background:
+    linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n            -webkit-background-clip:
+    text;\n            -webkit-text-fill-color: transparent;\n            background-clip:
+    text;\n        }\n\n        .upload-area {\n            border: 3px dashed #667eea;\n
+    \           border-radius: 15px;\n            padding: 40px;\n            text-align:
+    center;\n            cursor: pointer;\n            transition: all 0.3s ease;\n
+    \           background: #f8f9ff;\n            position: relative;\n            overflow:
+    hidden;\n        }\n\n        .upload-area:hover {\n            border-color:
+    #764ba2;\n            background: #f0f2ff;\n            transform: scale(1.02);\n
+    \       }\n\n        .upload-area.dragover {\n            background: #e8ebff;\n
+    \           border-color: #764ba2;\n            transform: scale(1.05);\n        }\n\n
+    \       .upload-icon {\n            font-size: 4em;\n            margin-bottom:
+    20px;\n            color: #667eea;\n            animation: float 3s ease-in-out
+    infinite;\n        }\n\n        @keyframes float {\n            0%, 100% { transform:
+    translateY(0); }\n            50% { transform: translateY(-10px); }\n        }\n\n
+    \       .upload-text {\n            color: #555;\n            font-size: 1.1em;\n
+    \           margin-bottom: 10px;\n        }\n\n        .upload-subtext {\n            color:
+    #888;\n            font-size: 0.9em;\n        }\n\n        #fileInput {\n            display:
+    none;\n        }\n\n        .filename-group {\n            margin-top: 25px;\n
+    \       }\n\n        label {\n            display: block;\n            color:
+    #555;\n            font-weight: 600;\n            margin-bottom: 8px;\n            font-size:
+    0.95em;\n        }\n\n        input[type=\"text\"] {\n            width: 100%;\n
+    \           padding: 12px 15px;\n            border: 2px solid #e0e0e0;\n            border-radius:
+    10px;\n            font-size: 1em;\n            transition: all 0.3s ease;\n            outline:
+    none;\n        }\n\n        input[type=\"text\"]:focus {\n            border-color:
+    #667eea;\n            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);\n        }\n\n
+    \       .upload-button {\n            width: 100%;\n            padding: 15px;\n
+    \           margin-top: 25px;\n            background: linear-gradient(135deg,
+    #667eea 0%, #764ba2 100%);\n            color: white;\n            border: none;\n
+    \           border-radius: 10px;\n            font-size: 1.1em;\n            font-weight:
+    600;\n            cursor: pointer;\n            transition: all 0.3s ease;\n            position:
+    relative;\n            overflow: hidden;\n        }\n\n        .upload-button:hover:not(:disabled)
+    {\n            transform: translateY(-2px);\n            box-shadow: 0 10px 20px
+    rgba(102, 126, 234, 0.3);\n        }\n\n        .upload-button:active:not(:disabled)
+    {\n            transform: translateY(0);\n        }\n\n        .upload-button:disabled
+    {\n            opacity: 0.6;\n            cursor: not-allowed;\n        }\n\n
+    \       .file-info {\n            display: none;\n            margin-top: 20px;\n
+    \           padding: 15px;\n            background: #f0f2ff;\n            border-radius:
+    10px;\n            border-left: 4px solid #667eea;\n        }\n\n        .file-info.show
+    {\n            display: block;\n            animation: fadeIn 0.3s ease;\n        }\n\n
+    \       @keyframes fadeIn {\n            from { opacity: 0; }\n            to
+    { opacity: 1; }\n        }\n\n        .file-name {\n            color: #333;\n
+    \           font-weight: 600;\n            margin-bottom: 5px;\n        }\n\n
+    \       .file-size {\n            color: #666;\n            font-size: 0.9em;\n
+    \       }\n\n        .progress-bar {\n            display: none;\n            width:
+    100%;\n            height: 6px;\n            background: #e0e0e0;\n            border-radius:
+    10px;\n            margin-top: 15px;\n            overflow: hidden;\n        }\n\n
+    \       .progress-bar.show {\n            display: block;\n        }\n\n        .progress-fill
+    {\n            height: 100%;\n            background: linear-gradient(90deg, #667eea
+    0%, #764ba2 100%);\n            border-radius: 10px;\n            transition:
+    width 0.3s ease;\n            width: 0;\n        }\n\n        .notification {\n
+    \           position: fixed;\n            top: 20px;\n            right: 20px;\n
+    \           padding: 15px 25px;\n            border-radius: 10px;\n            color:
+    white;\n            font-weight: 600;\n            box-shadow: 0 10px 30px rgba(0,
+    0, 0, 0.2);\n            animation: slideInRight 0.5s ease;\n            z-index:
+    1000;\n        }\n\n        @keyframes slideInRight {\n            from {\n                transform:
+    translateX(400px);\n                opacity: 0;\n            }\n            to
+    {\n                transform: translateX(0);\n                opacity: 1;\n            }\n
+    \       }\n\n        .notification.success {\n            background: linear-gradient(135deg,
+    #11998e 0%, #38ef7d 100%);\n        }\n\n        .notification.error {\n            background:
+    linear-gradient(135deg, #eb3349 0%, #f45c43 100%);\n        }\n    </style>\n</head>\n<body>\n
+    \   <div class=\"container\">\n        <h1>\U0001F4E4 File Upload</h1>\n\n        <div
+    class=\"upload-area\" id=\"uploadArea\">\n            <div class=\"upload-icon\">☁️</div>\n
+    \           <div class=\"upload-text\">Click to browse or drag & drop</div>\n
+    \           <div class=\"upload-subtext\">Your file here</div>\n            <input
+    type=\"file\" id=\"fileInput\">\n        </div>\n\n        <div class=\"file-info\"
+    id=\"fileInfo\">\n            <div class=\"file-name\" id=\"displayFileName\"></div>\n
+    \           <div class=\"file-size\" id=\"displayFileSize\"></div>\n        </div>\n\n
+    \       <div class=\"filename-group\">\n            <label for=\"filename\">Filename
+    (optional)</label>\n            <input type=\"text\" id=\"filename\" placeholder=\"Leave
+    empty to use original name\">\n        </div>\n\n        <div class=\"progress-bar\"
+    id=\"progressBar\">\n            <div class=\"progress-fill\" id=\"progressFill\"></div>\n
+    \       </div>\n\n        <button class=\"upload-button\" id=\"uploadButton\"
+    onclick=\"upload()\">\n            Upload File\n        </button>\n    </div>\n\n
+    \   <script>\n        const fileInput = document.getElementById('fileInput');\n
+    \       const uploadArea = document.getElementById('uploadArea');\n        const
+    fileInfo = document.getElementById('fileInfo');\n        const uploadButton =
+    document.getElementById('uploadButton');\n        const progressBar = document.getElementById('progressBar');\n
+    \       const progressFill = document.getElementById('progressFill');\n\n        //
+    Click to browse\n        uploadArea.addEventListener('click', () => fileInput.click());\n\n
+    \       // Drag and drop\n        uploadArea.addEventListener('dragover', (e)
+    => {\n            e.preventDefault();\n            uploadArea.classList.add('dragover');\n
+    \       });\n\n        uploadArea.addEventListener('dragleave', () => {\n            uploadArea.classList.remove('dragover');\n
+    \       });\n\n        uploadArea.addEventListener('drop', (e) => {\n            e.preventDefault();\n
+    \           uploadArea.classList.remove('dragover');\n\n            if (e.dataTransfer.files.length)
+    {\n                fileInput.files = e.dataTransfer.files;\n                updateFilename();\n
+    \           }\n        });\n\n        fileInput.addEventListener('change', updateFilename);\n\n
+    \       function updateFilename() {\n            const file = fileInput.files[0];\n
+    \           if (file) {\n                document.getElementById('filename').value
+    = file.name;\n                document.getElementById('displayFileName').textContent
+    = `\U0001F4C4 ${file.name}`;\n                document.getElementById('displayFileSize').textContent
+    = formatFileSize(file.size);\n                fileInfo.classList.add('show');\n
+    \           }\n        }\n\n        function formatFileSize(bytes) {\n            if
+    (bytes === 0) return '0 Bytes';\n            const k = 1024;\n            const
+    sizes = ['Bytes', 'KB', 'MB', 'GB'];\n            const i = Math.floor(Math.log(bytes)
+    / Math.log(k));\n            return Math.round(bytes / Math.pow(k, i) * 100) /
+    100 + ' ' + sizes[i];\n        }\n\n        function showNotification(message,
+    type) {\n            const notification = document.createElement('div');\n            notification.className
+    = `notification ${type}`;\n            notification.textContent = message;\n            document.body.appendChild(notification);\n\n
+    \           setTimeout(() => {\n                notification.style.animation =
+    'slideInRight 0.5s ease reverse';\n                setTimeout(() => notification.remove(),
+    500);\n            }, 3000);\n        }\n\n        function upload() {\n            const
+    file = fileInput.files[0];\n            if (!file) {\n                showNotification('⚠️
+    Please select a file first', 'error');\n                return;\n            }\n\n
+    \           const filename = document.getElementById('filename').value || file.name;\n
+    \           uploadButton.disabled = true;\n            uploadButton.textContent
+    = 'Uploading...';\n            progressBar.classList.add('show');\n\n            const
+    xhr = new XMLHttpRequest();\n\n            xhr.upload.addEventListener('progress',
+    (e) => {\n                if (e.lengthComputable) {\n                    const
+    percentComplete = (e.loaded / e.total) * 100;\n                    progressFill.style.width
+    = percentComplete + '%';\n                }\n            });\n\n            xhr.onload
+    = () => {\n                uploadButton.disabled = false;\n                uploadButton.textContent
+    = 'Upload File';\n                progressBar.classList.remove('show');\n                progressFill.style.width
+    = '0';\n\n                if (xhr.status < 300) {\n                    showNotification('✅
+    File uploaded successfully!', 'success');\n                    setTimeout(() =>
+    {\n                        window.location.href = './';\n                    },
+    1500);\n                } else {\n                    showNotification('❌ Upload
+    failed. Please try again.', 'error');\n                }\n            };\n\n            xhr.onerror
+    = () => {\n                uploadButton.disabled = false;\n                uploadButton.textContent
+    = 'Upload File';\n                progressBar.classList.remove('show');\n                progressFill.style.width
+    = '0';\n                showNotification('❌ Network error. Please try again.',
+    'error');\n            };\n\n            xhr.open('PUT', encodeURIComponent(filename));\n
+    \           xhr.send(file);\n        }\n    </script>\n</body>\n</html>\n"
+kind: ConfigMap
+metadata:
+  name: demo-server-config
+  namespace: eda-system

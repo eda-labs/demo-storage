@@ -1,0 +1,24 @@
+apiVersion: core.eda.nokia.com/v1
+kind: Manifest
+metadata:
+  name: demo-storage
+spec:
+  appInfo:
+    categories:
+      - integrations
+    documentation: demo_storage/docs
+  author: eda-labs
+  description: Lab/PoC HTTP file server.
+  group: demo-storage.eda.labs
+  image: ghcr.io/eda-labs/demo-storage:v0.1.0
+  supportedCoreVersions:
+    - v5.0
+  title: Demo Storage
+  version: v1alpha1
+  components:
+    - cr:
+        path: demo_storage/configmap.yaml
+    - cr:
+        path: demo_storage/server.yaml
+    - cr:
+        path: demo_storage/httpproxy.yaml

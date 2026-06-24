@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-server
+  namespace: "${EDA_BASE_NAMESPACE}" # eda-set: ${EDA_BASE_NAMESPACE}
+  labels:
+    vno.nokia.com/app: demo-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      vno.nokia.com/app: demo-server
+  template:
+    metadata:
+      labels:
+        vno.nokia.com/app: demo-server
+    spec:
+      containers:
+        - name: demo-server
+          image: docker.io/library/python:alpine
+          command:
+            - /bin/sh
+            - -c
+            - cp /opt/demo-server/upload.html /var/www/files/upload.html && python3 /opt/demo-server/http_server.py
+          workingDir: /var/www/files
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: http-server-code-config
+              mountPath: /opt/demo-server
+            - name: demo-data
+              mountPath: /var/www/files
+      volumes:
+        - name: http-server-code-config
+          configMap:
+            name: demo-server-config
+        - name: demo-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-server
+  namespace: "${EDA_BASE_NAMESPACE}" # eda-set: ${EDA_BASE_NAMESPACE}
+  labels:
+    vno.nokia.com/app: demo-server
+spec:
+  selector:
+    vno.nokia.com/app: demo-server
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
