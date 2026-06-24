@@ -2,8 +2,8 @@
 
 A minimal HTTP file server packaged as an EDA app. It provides a ready-to-use storage back-end for development clusters — no external object storage required.
 
-!!! Warning "Lab / PoC only"
-    This server has no authentication and uses ephemeral (`emptyDir`) storage. Do not use it for production workloads.
+> [!WARNING]
+> **Lab / PoC only** — This server has no authentication and uses ephemeral (`emptyDir`) storage. Do not use it for production workloads.
 
 ## What it installs
 
@@ -28,18 +28,18 @@ kubectl -n eda-system get deployment demo-server
 ### Upload a file
 
 ```bash
-curl -k -X PUT --upload-file ./myfile https://<eda-fqdn>/core/httpproxy/v1/demo-server/myfile
+curl -k -X PUT --upload-file ./myfile https://$EDA_FQDN/core/httpproxy/v1/demo-server/myfile
 ```
 
-There is also a web upload form at `https://<eda-fqdn>/core/httpproxy/v1/demo-server/upload.html`.
+There is also a web upload form at `https://$EDA_FQDN/core/httpproxy/v1/demo-server/upload.html`.
 
 ### Download a file
 
 ```bash
-curl -k https://<eda-fqdn>/core/httpproxy/v1/demo-server/myfile
+curl -k https://$EDA_FQDN/core/httpproxy/v1/demo-server/myfile
 ```
 
-Open `https://<eda-fqdn>/core/httpproxy/v1/demo-server/` in a browser to see the list of stored files and click any entry to download it.
+Open `https://$EDA_FQDN/core/httpproxy/v1/demo-server/` in a browser to see the list of stored files and click any entry to download it.
 
 ## Limitations
 
