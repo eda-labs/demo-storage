@@ -38,6 +38,8 @@ kubectl -n eda-system get deployment demo-server
 
 ## Using the server
 
+The server is available for in-cluster processes at `https://demo-server.eda-system.svc.cluster.local`. It is exposed through the EDA reverse proxy at https://$EDA_FQDN/core/httpproxy/v1/demo-server
+
 ### Upload a file
 
 ```bash
