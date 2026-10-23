@@ -1,31 +1,179 @@
 apiVersion: v1
 data:
   http_server.py: |
-    # Based on https://gist.github.com/mildred/67d22d7289ae8f16cae7
-
     import argparse
+    import datetime
+    import html
     import http.server
+    import io
+    import os
+    import urllib.parse
+
+    SERVER_FILES = frozenset({'http_server.py', 'index.css', 'index.js'})
+
+
+    def _fmt_size(n):
+        if n >= 1024 * 1024:
+            return f'{n / (1024 * 1024):.1f} MB'
+        if n >= 1024:
+            return f'{n / 1024:.1f} KB'
+        return f'{n} B'
+
+
+    def _fmt_mtime(path):
+        ts = os.path.getmtime(path)
+        return datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M')
+
+
+    def _row_html(name, fpath):
+        size_bytes = os.path.getsize(fpath)
+        mtime = _fmt_mtime(fpath)
+        ename = html.escape(name)
+        return (
+            f'        <tr data-name="{ename}" data-mtime="{mtime}" data-size="{size_bytes}">'
+            f'<td><a href="{urllib.parse.quote(name)}">{ename}</a></td>'
+            f'<td class="mtime">{mtime}</td>'
+            f'<td class="size">{_fmt_size(size_bytes)}</td>'
+            f'<td class="col-del"><button class="btn-del" title="Delete" data-name="{ename}">&times;</button></td>'
+            f'</tr>'
+        )
+
+
+    def _page_html(tbody, count):
+        count_label = f'{count} file{"s" if count != 1 else ""}'
+        return f"""\
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>File Storage</title>
+      <link rel="stylesheet" href="index.css">
+    </head>
+    <body>
+      <header>
+        <h1>File Storage</h1>
+        <button id="openUpload" class="btn-primary">Upload</button>
+      </header>
+      <main>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-col="name" class="sort-asc">Name <span class="file-count" data-count="{count}">{count_label}</span></th>
+                <th data-col="mtime">Modified</th>
+                <th data-col="size" class="col-size">Size</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+    {tbody}
+            </tbody>
+          </table>
+        </div>
+      </main>
+      <div id="modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div id="modalBackdrop"></div>
+        <div class="modal-panel">
+          <div class="modal-header">
+            <h2 id="modalTitle">Upload a file</h2>
+            <button id="closeUpload" class="btn-icon" aria-label="Close">&times;</button>
+          </div>
+          <div class="upload-area" id="uploadArea">
+            <span class="upload-icon">&#11014;</span>
+            <span class="upload-text">Click to browse or drag &amp; drop</span>
+            <input type="file" id="fileInput" aria-label="Select file">
+          </div>
+          <div class="file-info hidden" id="fileInfo">
+            <span id="displayFileName"></span>
+            <span id="displayFileSize"></span>
+          </div>
+          <div class="field-group">
+            <label for="filename">Save as</label>
+            <input type="text" id="filename" placeholder="Leave empty to use original name">
+          </div>
+          <div class="progress-bar hidden" id="progressBar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <button class="btn-primary btn-full" id="uploadButton">Upload</button>
+        </div>
+      </div>
+      <script src="index.js"></script>
+    </body>
+    </html>"""
+
 
     class HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def _send_empty(self, code):
+            self.send_response(code)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+
+        def _reject_nested(self):
+            """Send 400 and return True if the URL path goes deeper than root."""
+            if '/' in urllib.parse.urlparse(self.path).path.strip('/'):
+                self.send_error(400, 'Nested paths are not supported')
+                return True
+            return False
+
         def do_PUT(self):
             try:
+                if self._reject_nested():
+                    return
                 path = self.translate_path(self.path)
                 if path.endswith('/'):
-                    self.send_response(405, "Method Not Allowed")
-                    self.end_headers()
-                    self.wfile.write("PUT not allowed on a directory\n".encode())
-                else:
-                    # Don't support folders as we don't know where it is hosted from (e.g., HTTPProxy)
-                    path = path.rsplit("/", 1)[-1]
-                    length = int(self.headers['Content-Length'])
-                    with open(path, 'wb') as f:
-                        f.write(self.rfile.read(length))
-                    self.send_response(201, "Created")
-                    self.send_header('Content-Length', '0')
-                    self.end_headers()
+                    self.send_error(405, 'PUT not allowed on a directory')
+                    return
+                length = int(self.headers['Content-Length'])
+                with open(os.path.basename(path), 'wb') as f:
+                    f.write(self.rfile.read(length))
+                self._send_empty(201)
             except Exception as e:
                 self.send_error(500, f"Error: {str(e)}")
                 raise
+
+        def do_DELETE(self):
+            try:
+                if self._reject_nested():
+                    return
+                name = os.path.basename(self.translate_path(self.path))
+                if not name or name in SERVER_FILES:
+                    self._send_empty(403)
+                    return
+                os.remove(name)
+                self._send_empty(204)
+            except FileNotFoundError:
+                self.send_error(404, 'Not found')
+            except Exception as e:
+                self.send_error(500, f"Error: {str(e)}")
+                raise
+
+        def list_directory(self, path):
+            if os.path.realpath(path) != os.path.realpath(os.getcwd()):
+                self.send_error(403, 'Directory listing only available at root')
+                return None
+            try:
+                names = sorted(
+                    (f for f in os.listdir(path)
+                     if os.path.isfile(os.path.join(path, f)) and f not in SERVER_FILES),
+                    key=str.lower,
+                )
+            except OSError:
+                self.send_error(404, 'No permission to list directory')
+                return None
+
+            rows = [_row_html(name, os.path.join(path, name)) for name in names]
+            tbody = '\n'.join(rows) if rows else \
+                '        <tr class="empty"><td colspan="4">No files uploaded yet.</td></tr>'
+
+            encoded = _page_html(tbody, len(names)).encode('utf-8')
+            f = io.BytesIO(encoded)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(encoded)))
+            self.end_headers()
+            return f
+
 
     if __name__ == '__main__':
         parser = argparse.ArgumentParser()
@@ -34,146 +182,594 @@ data:
                             help='Specify port to host HTTP server on')
         args = parser.parse_args()
 
-        http.server.test(HandlerClass=HTTPRequestHandler, port=args.port, bind="0.0.0.0")
-  upload.html: "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"UTF-8\">\n    <meta
-    name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>File
-    Upload</title>\n    <style>\n        * {\n            margin: 0;\n            padding:
-    0;\n            box-sizing: border-box;\n        }\n\n        body {\n            font-family:
-    'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;\n            background: linear-gradient(135deg,
-    #667eea 0%, #764ba2 100%);\n            min-height: 100vh;\n            display:
-    flex;\n            justify-content: center;\n            align-items: center;\n
-    \           padding: 20px;\n        }\n\n        .container {\n            background:
-    white;\n            border-radius: 20px;\n            box-shadow: 0 20px 60px
-    rgba(0, 0, 0, 0.3);\n            padding: 40px;\n            max-width: 500px;\n
-    \           width: 100%;\n            animation: slideIn 0.5s ease-out;\n        }\n\n
-    \       @keyframes slideIn {\n            from {\n                opacity: 0;\n
-    \               transform: translateY(-30px);\n            }\n            to {\n
-    \               opacity: 1;\n                transform: translateY(0);\n            }\n
-    \       }\n\n        h1 {\n            color: #333;\n            text-align: center;\n
-    \           margin-bottom: 30px;\n            font-size: 2em;\n            background:
-    linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n            -webkit-background-clip:
-    text;\n            -webkit-text-fill-color: transparent;\n            background-clip:
-    text;\n        }\n\n        .upload-area {\n            border: 3px dashed #667eea;\n
-    \           border-radius: 15px;\n            padding: 40px;\n            text-align:
-    center;\n            cursor: pointer;\n            transition: all 0.3s ease;\n
-    \           background: #f8f9ff;\n            position: relative;\n            overflow:
-    hidden;\n        }\n\n        .upload-area:hover {\n            border-color:
-    #764ba2;\n            background: #f0f2ff;\n            transform: scale(1.02);\n
-    \       }\n\n        .upload-area.dragover {\n            background: #e8ebff;\n
-    \           border-color: #764ba2;\n            transform: scale(1.05);\n        }\n\n
-    \       .upload-icon {\n            font-size: 4em;\n            margin-bottom:
-    20px;\n            color: #667eea;\n            animation: float 3s ease-in-out
-    infinite;\n        }\n\n        @keyframes float {\n            0%, 100% { transform:
-    translateY(0); }\n            50% { transform: translateY(-10px); }\n        }\n\n
-    \       .upload-text {\n            color: #555;\n            font-size: 1.1em;\n
-    \           margin-bottom: 10px;\n        }\n\n        .upload-subtext {\n            color:
-    #888;\n            font-size: 0.9em;\n        }\n\n        #fileInput {\n            display:
-    none;\n        }\n\n        .filename-group {\n            margin-top: 25px;\n
-    \       }\n\n        label {\n            display: block;\n            color:
-    #555;\n            font-weight: 600;\n            margin-bottom: 8px;\n            font-size:
-    0.95em;\n        }\n\n        input[type=\"text\"] {\n            width: 100%;\n
-    \           padding: 12px 15px;\n            border: 2px solid #e0e0e0;\n            border-radius:
-    10px;\n            font-size: 1em;\n            transition: all 0.3s ease;\n            outline:
-    none;\n        }\n\n        input[type=\"text\"]:focus {\n            border-color:
-    #667eea;\n            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);\n        }\n\n
-    \       .upload-button {\n            width: 100%;\n            padding: 15px;\n
-    \           margin-top: 25px;\n            background: linear-gradient(135deg,
-    #667eea 0%, #764ba2 100%);\n            color: white;\n            border: none;\n
-    \           border-radius: 10px;\n            font-size: 1.1em;\n            font-weight:
-    600;\n            cursor: pointer;\n            transition: all 0.3s ease;\n            position:
-    relative;\n            overflow: hidden;\n        }\n\n        .upload-button:hover:not(:disabled)
-    {\n            transform: translateY(-2px);\n            box-shadow: 0 10px 20px
-    rgba(102, 126, 234, 0.3);\n        }\n\n        .upload-button:active:not(:disabled)
-    {\n            transform: translateY(0);\n        }\n\n        .upload-button:disabled
-    {\n            opacity: 0.6;\n            cursor: not-allowed;\n        }\n\n
-    \       .file-info {\n            display: none;\n            margin-top: 20px;\n
-    \           padding: 15px;\n            background: #f0f2ff;\n            border-radius:
-    10px;\n            border-left: 4px solid #667eea;\n        }\n\n        .file-info.show
-    {\n            display: block;\n            animation: fadeIn 0.3s ease;\n        }\n\n
-    \       @keyframes fadeIn {\n            from { opacity: 0; }\n            to
-    { opacity: 1; }\n        }\n\n        .file-name {\n            color: #333;\n
-    \           font-weight: 600;\n            margin-bottom: 5px;\n        }\n\n
-    \       .file-size {\n            color: #666;\n            font-size: 0.9em;\n
-    \       }\n\n        .progress-bar {\n            display: none;\n            width:
-    100%;\n            height: 6px;\n            background: #e0e0e0;\n            border-radius:
-    10px;\n            margin-top: 15px;\n            overflow: hidden;\n        }\n\n
-    \       .progress-bar.show {\n            display: block;\n        }\n\n        .progress-fill
-    {\n            height: 100%;\n            background: linear-gradient(90deg, #667eea
-    0%, #764ba2 100%);\n            border-radius: 10px;\n            transition:
-    width 0.3s ease;\n            width: 0;\n        }\n\n        .notification {\n
-    \           position: fixed;\n            top: 20px;\n            right: 20px;\n
-    \           padding: 15px 25px;\n            border-radius: 10px;\n            color:
-    white;\n            font-weight: 600;\n            box-shadow: 0 10px 30px rgba(0,
-    0, 0, 0.2);\n            animation: slideInRight 0.5s ease;\n            z-index:
-    1000;\n        }\n\n        @keyframes slideInRight {\n            from {\n                transform:
-    translateX(400px);\n                opacity: 0;\n            }\n            to
-    {\n                transform: translateX(0);\n                opacity: 1;\n            }\n
-    \       }\n\n        .notification.success {\n            background: linear-gradient(135deg,
-    #11998e 0%, #38ef7d 100%);\n        }\n\n        .notification.error {\n            background:
-    linear-gradient(135deg, #eb3349 0%, #f45c43 100%);\n        }\n    </style>\n</head>\n<body>\n
-    \   <div class=\"container\">\n        <h1>\U0001F4E4 File Upload</h1>\n\n        <div
-    class=\"upload-area\" id=\"uploadArea\">\n            <div class=\"upload-icon\">☁️</div>\n
-    \           <div class=\"upload-text\">Click to browse or drag & drop</div>\n
-    \           <div class=\"upload-subtext\">Your file here</div>\n            <input
-    type=\"file\" id=\"fileInput\">\n        </div>\n\n        <div class=\"file-info\"
-    id=\"fileInfo\">\n            <div class=\"file-name\" id=\"displayFileName\"></div>\n
-    \           <div class=\"file-size\" id=\"displayFileSize\"></div>\n        </div>\n\n
-    \       <div class=\"filename-group\">\n            <label for=\"filename\">Filename
-    (optional)</label>\n            <input type=\"text\" id=\"filename\" placeholder=\"Leave
-    empty to use original name\">\n        </div>\n\n        <div class=\"progress-bar\"
-    id=\"progressBar\">\n            <div class=\"progress-fill\" id=\"progressFill\"></div>\n
-    \       </div>\n\n        <button class=\"upload-button\" id=\"uploadButton\"
-    onclick=\"upload()\">\n            Upload File\n        </button>\n    </div>\n\n
-    \   <script>\n        const fileInput = document.getElementById('fileInput');\n
-    \       const uploadArea = document.getElementById('uploadArea');\n        const
-    fileInfo = document.getElementById('fileInfo');\n        const uploadButton =
-    document.getElementById('uploadButton');\n        const progressBar = document.getElementById('progressBar');\n
-    \       const progressFill = document.getElementById('progressFill');\n\n        //
-    Click to browse\n        uploadArea.addEventListener('click', () => fileInput.click());\n\n
-    \       // Drag and drop\n        uploadArea.addEventListener('dragover', (e)
-    => {\n            e.preventDefault();\n            uploadArea.classList.add('dragover');\n
-    \       });\n\n        uploadArea.addEventListener('dragleave', () => {\n            uploadArea.classList.remove('dragover');\n
-    \       });\n\n        uploadArea.addEventListener('drop', (e) => {\n            e.preventDefault();\n
-    \           uploadArea.classList.remove('dragover');\n\n            if (e.dataTransfer.files.length)
-    {\n                fileInput.files = e.dataTransfer.files;\n                updateFilename();\n
-    \           }\n        });\n\n        fileInput.addEventListener('change', updateFilename);\n\n
-    \       function updateFilename() {\n            const file = fileInput.files[0];\n
-    \           if (file) {\n                document.getElementById('filename').value
-    = file.name;\n                document.getElementById('displayFileName').textContent
-    = `\U0001F4C4 ${file.name}`;\n                document.getElementById('displayFileSize').textContent
-    = formatFileSize(file.size);\n                fileInfo.classList.add('show');\n
-    \           }\n        }\n\n        function formatFileSize(bytes) {\n            if
-    (bytes === 0) return '0 Bytes';\n            const k = 1024;\n            const
-    sizes = ['Bytes', 'KB', 'MB', 'GB'];\n            const i = Math.floor(Math.log(bytes)
-    / Math.log(k));\n            return Math.round(bytes / Math.pow(k, i) * 100) /
-    100 + ' ' + sizes[i];\n        }\n\n        function showNotification(message,
-    type) {\n            const notification = document.createElement('div');\n            notification.className
-    = `notification ${type}`;\n            notification.textContent = message;\n            document.body.appendChild(notification);\n\n
-    \           setTimeout(() => {\n                notification.style.animation =
-    'slideInRight 0.5s ease reverse';\n                setTimeout(() => notification.remove(),
-    500);\n            }, 3000);\n        }\n\n        function upload() {\n            const
-    file = fileInput.files[0];\n            if (!file) {\n                showNotification('⚠️
-    Please select a file first', 'error');\n                return;\n            }\n\n
-    \           const filename = document.getElementById('filename').value || file.name;\n
-    \           uploadButton.disabled = true;\n            uploadButton.textContent
-    = 'Uploading...';\n            progressBar.classList.add('show');\n\n            const
-    xhr = new XMLHttpRequest();\n\n            xhr.upload.addEventListener('progress',
-    (e) => {\n                if (e.lengthComputable) {\n                    const
-    percentComplete = (e.loaded / e.total) * 100;\n                    progressFill.style.width
-    = percentComplete + '%';\n                }\n            });\n\n            xhr.onload
-    = () => {\n                uploadButton.disabled = false;\n                uploadButton.textContent
-    = 'Upload File';\n                progressBar.classList.remove('show');\n                progressFill.style.width
-    = '0';\n\n                if (xhr.status < 300) {\n                    showNotification('✅
-    File uploaded successfully!', 'success');\n                    setTimeout(() =>
-    {\n                        window.location.href = './';\n                    },
-    1500);\n                } else {\n                    showNotification('❌ Upload
-    failed. Please try again.', 'error');\n                }\n            };\n\n            xhr.onerror
-    = () => {\n                uploadButton.disabled = false;\n                uploadButton.textContent
-    = 'Upload File';\n                progressBar.classList.remove('show');\n                progressFill.style.width
-    = '0';\n                showNotification('❌ Network error. Please try again.',
-    'error');\n            };\n\n            xhr.open('PUT', encodeURIComponent(filename));\n
-    \           xhr.send(file);\n        }\n    </script>\n</body>\n</html>\n"
+        with http.server.ThreadingHTTPServer(('0.0.0.0', args.port), HTTPRequestHandler) as httpd:
+            httpd.serve_forever()
+  index.css: |
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --accent:      #005AFF;
+      --accent-hover:#1a7a85;
+      --accent-light:#E4F0FF;
+      --bg:          #f5f5f5;
+      --surface:     #ffffff;
+      --text:        #2b2b2b;
+      --muted:       #616877;
+      --border:      #e0e0e0;
+      --error:       #c02a2a;
+      --success:     #157347;
+      --radius:      6px;
+    }
+
+    .hidden { display: none !important; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.9rem 2rem;
+      background: var(--text);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--surface);
+      letter-spacing: 0.01em;
+    }
+
+    /* ── Main / file list ── */
+    main {
+      max-width: 760px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+
+    .table-wrap {
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow-x: hidden;
+      overflow-y: auto;
+      max-height: 65vh;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface);
+      text-align: left;
+      padding: 0.75rem 1.25rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    thead th[data-col] {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    thead th[data-col]:hover {
+      color: var(--text);
+    }
+
+    thead th.sort-asc::after,
+    thead th.sort-desc::after {
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    thead th.sort-asc::after  { content: ' ↑'; }
+    thead th.sort-desc::after { content: ' ↓'; }
+
+    th.col-size { text-align: right; }
+
+    thead th:first-child  { min-width: 12rem; }
+    thead th:nth-child(2) { min-width: 9rem; }
+    thead th:nth-child(3) { min-width: 5rem; }
+
+    th:last-child {
+      width: 2rem;
+      padding: 0;
+    }
+
+    .file-count {
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      margin-left: 0.4rem;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    tbody tr:last-child { border-bottom: none; }
+
+    tbody tr:not(.empty):hover { background: var(--accent-light); }
+
+    tbody td {
+      padding: 0.8rem 1.25rem;
+      font-size: 0.9rem;
+    }
+
+    tbody td a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    tbody td a:hover {
+      text-decoration: underline;
+      text-decoration-thickness: 0.5px;
+    }
+
+    td.mtime,
+    td.size {
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    td.size { text-align: right; }
+
+    tr.empty td {
+      text-align: center;
+      color: var(--muted);
+      padding: 2.5rem 1.25rem;
+    }
+
+    td.col-del {
+      text-align: center;
+      padding: 0 0.5rem;
+    }
+
+    /* ── Buttons ── */
+    .btn-del,
+    .btn-icon {
+      background: none;
+      border: none;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .btn-del {
+      color: var(--muted);
+      font-size: 1.1rem;
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .btn-del:hover {
+      color: var(--error);
+      background: #fde8e8;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.45rem 1rem;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-full {
+      width: 100%;
+      justify-content: center;
+      padding: 0.65rem;
+      font-size: 0.95rem;
+      margin-top: 1.25rem;
+    }
+
+    .btn-icon {
+      font-size: 1.4rem;
+      color: var(--muted);
+      padding: 0 0.2rem;
+      transition: color 0.15s;
+    }
+
+    .btn-icon:hover { color: var(--text); }
+
+    /* ── Modal ── */
+    #modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #modalBackdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(3px);
+    }
+
+    .modal-panel {
+      position: relative;
+      background: var(--surface);
+      border-radius: 8px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+      padding: 1.75rem 2rem 2rem;
+      width: min(460px, 92vw);
+      animation: fadeUp 0.18s ease;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .modal-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    /* ── Upload drop zone ── */
+    .upload-area {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      background: var(--bg);
+      user-select: none;
+    }
+
+    .upload-area.locked {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .upload-area.locked:hover {
+      border-color: var(--border);
+      background: var(--bg);
+    }
+
+    .upload-area:hover,
+    .upload-area.dragover {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+
+    .upload-icon {
+      display: block;
+      font-size: 2rem;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+      line-height: 1;
+    }
+
+    .upload-text {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    #fileInput { display: none; }
+
+    /* ── Selected file info ── */
+    .file-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.9rem;
+      background: var(--accent-light);
+      border-radius: var(--radius);
+      border-left: 3px solid var(--accent);
+      font-size: 0.88rem;
+    }
+
+    #displayFileName {
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #displayFileSize {
+      color: var(--muted);
+      white-space: nowrap;
+      padding-left: 0.75rem;
+    }
+
+    /* ── Save-as field ── */
+    .field-group { margin-top: 1rem; }
+
+    .field-group label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.35rem;
+    }
+
+    .field-group input[type="text"] {
+      width: 100%;
+      padding: 0.55rem 0.85rem;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+
+    .field-group input[type="text"]:focus { border-color: var(--accent); }
+
+    /* ── Progress bar ── */
+    .progress-bar {
+      height: 3px;
+      background: var(--border);
+      border-radius: 3px;
+      margin-top: 1rem;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
+
+    /* ── Toast notifications ── */
+    .notification {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      padding: 0.7rem 1.1rem;
+      border-radius: var(--radius);
+      color: #fff;
+      font-size: 0.88rem;
+      font-weight: 500;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+      animation: toastIn 0.25s ease;
+      z-index: 200;
+    }
+
+    @keyframes toastIn {
+      from { transform: translateX(110%); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+
+    .notification.success { background: var(--success); }
+    .notification.error   { background: var(--error); }
+  index.js: |
+    const uploadForm = {
+      modal:     document.getElementById('modal'),
+      openBtn:   document.getElementById('openUpload'),
+      closeBtn:  document.getElementById('closeUpload'),
+      backdrop:  document.getElementById('modalBackdrop'),
+      dropZone:  document.getElementById('uploadArea'),
+      fileInput: document.getElementById('fileInput'),
+      fileInfo:  document.getElementById('fileInfo'),
+      fileName:  document.getElementById('displayFileName'),
+      fileSize:  document.getElementById('displayFileSize'),
+      nameInput: document.getElementById('filename'),
+      submitBtn: document.getElementById('uploadButton'),
+      progress:  document.getElementById('progressBar'),
+      fill:      document.getElementById('progressFill'),
+
+      init() {
+        this.openBtn.addEventListener('click', () => this.open());
+        this.closeBtn.addEventListener('click', () => this.close());
+        this.backdrop.addEventListener('click', () => this.close());
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.close(); });
+
+        this.dropZone.addEventListener('click', () => {
+          if (!this.dropZone.classList.contains('locked')) this.fileInput.click();
+        });
+        this.dropZone.addEventListener('dragover', (e) => {
+          if (this.dropZone.classList.contains('locked')) return;
+          e.preventDefault();
+          this.dropZone.classList.add('dragover');
+        });
+        this.dropZone.addEventListener('dragleave', () => this.dropZone.classList.remove('dragover'));
+        this.dropZone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          this.dropZone.classList.remove('dragover');
+          if (this.dropZone.classList.contains('locked')) return;
+          const file = e.dataTransfer.files[0];
+          if (file) {
+            this.fileInput.files = e.dataTransfer.files;
+            this.updateFileInfo();
+          }
+        });
+
+        this.fileInput.addEventListener('change', () => this.updateFileInfo());
+        this.submitBtn.addEventListener('click', () => this.upload());
+      },
+
+      open() {
+        this.modal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+      },
+
+      close() {
+        this.modal.classList.add('hidden');
+        document.body.style.overflow = '';
+        this.dropZone.classList.remove('locked');
+        this.fileInfo.classList.add('hidden');
+        this.fileInput.value = '';
+      },
+
+      updateFileInfo() {
+        const file = this.fileInput.files[0];
+        if (!file) return;
+        this.nameInput.value = file.name;
+        this.fileName.textContent = file.name;
+        this.fileSize.textContent = fmtSize(file.size);
+        this.fileInfo.classList.remove('hidden');
+        this.dropZone.classList.add('locked');
+      },
+
+      resetUI() {
+        this.submitBtn.disabled = false;
+        this.submitBtn.textContent = 'Upload';
+        this.progress.classList.add('hidden');
+        this.fill.style.width = '0';
+      },
+
+      upload() {
+        const file = this.fileInput.files[0];
+        if (!file) { notify('Please select a file', 'error'); return; }
+
+        const name = this.nameInput.value.trim() || file.name;
+        this.submitBtn.disabled = true;
+        this.submitBtn.textContent = 'Uploading\u2026';
+        this.progress.classList.remove('hidden');
+
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) this.fill.style.width = `${(e.loaded / e.total) * 100}%`;
+        });
+        xhr.onload = () => {
+          this.resetUI();
+          if (xhr.status < 300) {
+            notify('File uploaded successfully', 'success');
+            setTimeout(() => { this.close(); globalThis.location.reload(); }, 1200);
+          } else {
+            notify('Upload failed', 'error');
+          }
+        };
+        xhr.onerror = () => {
+          this.resetUI();
+          notify('Network error', 'error');
+        };
+        xhr.open('PUT', new URL(encodeURIComponent(name), globalThis.location.href).href);
+        xhr.send(file);
+      },
+    };
+
+    const fileList = {
+      tbody:   document.querySelector('tbody'),
+      headers: document.querySelectorAll('thead th[data-col]'),
+      sortCol: 'name',
+      sortAsc: true,
+
+      init() {
+        this.headers.forEach(th => {
+          th.addEventListener('click', () => {
+            if (this.sortCol === th.dataset.col) {
+              this.sortAsc = !this.sortAsc;
+            } else {
+              this.sortCol = th.dataset.col;
+              this.sortAsc = true;
+            }
+            this.applySort();
+          });
+        });
+
+        this.tbody.addEventListener('click', (e) => {
+          const btn = e.target.closest('.btn-del');
+          if (!btn) return;
+          const name = btn.dataset.name;
+          if (!globalThis.confirm(`Delete "${name}"?`)) return;
+          fetch(new URL(encodeURIComponent(name), globalThis.location.href).href, { method: 'DELETE' })
+            .then(r => {
+              if (r.ok) {
+                globalThis.location.reload();
+              } else {
+                notify('Delete failed', 'error');
+              }
+            })
+            .catch(() => notify('Network error', 'error'));
+        });
+      },
+
+      applySort() {
+        const rows = Array.from(this.tbody.querySelectorAll('tr:not(.empty)'));
+        rows.sort((a, b) => {
+          const va = a.dataset[this.sortCol], vb = b.dataset[this.sortCol];
+          const cmp = this.sortCol === 'size' ? Number.parseInt(va, 10) - Number.parseInt(vb, 10) : va.localeCompare(vb);
+          return this.sortAsc ? cmp : -cmp;
+        });
+        rows.forEach(r => this.tbody.appendChild(r));
+
+        this.headers.forEach(th => {
+          th.classList.toggle('sort-asc',  th.dataset.col === this.sortCol &&  this.sortAsc);
+          th.classList.toggle('sort-desc', th.dataset.col === this.sortCol && !this.sortAsc);
+        });
+      },
+    };
+
+    uploadForm.init();
+    fileList.init();
+
+    function notify(msg, type) {
+      const el = document.createElement('div');
+      el.className = `notification ${type}`;
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => {
+        el.style.transition = 'opacity 0.35s';
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 360);
+      }, 2600);
+    }
+
+    function fmtSize(n) {
+      if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+      if (n >= 1024)        return `${(n / 1024).toFixed(1)} KB`;
+      return `${n} B`;
+    }
 kind: ConfigMap
 metadata:
   name: demo-server-config
-  namespace: eda-system
+  namespace: "${EDA_BASE_NAMESPACE}" # eda-set: ${EDA_BASE_NAMESPACE}

@@ -10,12 +10,12 @@ build-workflows: $(LIST_BUILD_WORKFLOWS)
 
 .PHONY: package-operators
 HELP_TARGETS += package-operators
-HELP_package-operators := Build all operator containers (vars: TARGET_IMAGE, DOCKER_BUILD_ARGS)
+HELP_package-operators := Build all operator containers (vars: CONTAINER_TOOL, PLATFORM, REGISTRY, PACKAGE_OPERATION, TARGET_IMAGE, DOCKER_BUILD_ARGS)
 package-operators: $(LIST_PACKAGE_OPERATORS)
 
 .PHONY: package-workflows
 HELP_TARGETS += package-workflows
-HELP_package-workflows := Build and push all workflow containers (vars: TARGET_IMAGE, DOCKER_BUILD_ARGS)
+HELP_package-workflows := Build all workflow containers (vars: CONTAINER_TOOL, PLATFORM, REGISTRY, PACKAGE_OPERATION, TARGET_IMAGE, DOCKER_BUILD_ARGS)
 package-workflows: $(LIST_PACKAGE_WORKFLOWS)
 
 .PHONY: publish-apps
@@ -78,4 +78,16 @@ help:
 	@$(foreach app,$(APPS),$(info )$(info $(shell printf "\033[32m%s\033[0m" "$(app)"))$(call print-target-list,app,$(filter $(app)-%,$(LIST_PUBLISH_APPS) $(LIST_MOD_TIDY) $(LIST_TESTS) $(LIST_GENERATE)))$(call print-target-list,operators,$(filter $(app)-%,$(LIST_BUILD_OPERATORS) $(LIST_PACKAGE_OPERATORS)))$(call print-target-list,workflows,$(filter $(app)-%,$(LIST_BUILD_WORKFLOWS) $(LIST_PACKAGE_WORKFLOWS))))
 	@$(info )
 	@$(info APPS: $(APPS))
+	@$(info )
+	@$(info Variables:)
+	@$(call print-section-header,global (all targets))
+	@$(call print-target-line-indented,APPS,Space-separated list of app dirs to operate on (default: all))
+	@$(call print-target-line-indented,NO_OF_JOBS,Number of parallel make jobs (default: nproc))
+	@$(call print-section-header,package-operators / package-workflows)
+	@$(call print-target-line-indented,CONTAINER_TOOL,Container CLI for package targets: docker (default) or podman)
+	@$(call print-target-line-indented,PLATFORM,Target platform for package builds (default: linux/amd64))
+	@$(call print-target-line-indented,DOCKER_BUILD_ARGS,Extra arguments appended to the container build command)
+	@$(call print-target-line-indented,PACKAGE_OPERATION,What buildx does with package images: load (default, into local docker store) or push (to $(REGISTRY)))
+	@$(call print-target-line-indented,REGISTRY,If using PACKAGE_OPERATION=push, container registry for package targets (default: $(REGISTRY)))
+	@$(call print-target-line-indented,TARGET_IMAGE,Overrides the base image via --build-arg TARGET_IMAGE)
 	@true

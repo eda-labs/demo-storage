@@ -23,8 +23,10 @@ A minimal HTTP file server packaged as an EDA app. It provides a ready-to-use st
 | Resource | Kind | Namespace | Purpose |
 |----------|------|-----------|---------|
 | `demo-server` | `Deployment` + `Service` | `eda-system` | Python HTTP server on port 8080. Accepts file uploads and serves them back. Contents are lost on pod restart. |
-| `demo-server-config` | `ConfigMap` | `eda-system` | Holds the embedded `http_server.py` and `upload.html`. |
+| `demo-server-config` | `ConfigMap` | `eda-system` | Holds the embedded `http_server.py`, `index.css`, and `index.js`. |
 | `demo-server` (HttpProxy) | `core.eda.nokia.com/v1 HttpProxy` | `eda-system` | Exposes the server through EDA's reverse proxy under `/core/httpproxy/v1/demo-server/`. |
+
+The EDA system namespace (canonically `eda-system`) is not a fixed value — it is set at EDA install time and may differ across deployments. Manifests use `"${EDA_BASE_NAMESPACE}"` with `# eda-set:`.
 
 ## Installation
 
@@ -38,7 +40,7 @@ kubectl -n eda-system get deployment demo-server
 
 ## Using the server
 
-The server is available for in-cluster processes at `https://demo-server.eda-system.svc.cluster.local`. It is exposed through the EDA reverse proxy at https://$EDA_FQDN/core/httpproxy/v1/demo-server
+The server is available for in-cluster processes at `http://demo-server.eda-system.svc.cluster.local:8080`. It is exposed through the EDA reverse proxy at https://$EDA_FQDN/core/httpproxy/v1/demo-server
 
 ### Upload a file
 
@@ -46,15 +48,13 @@ The server is available for in-cluster processes at `https://demo-server.eda-sys
 curl -k -X PUT --upload-file ./myfile https://$EDA_FQDN/core/httpproxy/v1/demo-server/myfile
 ```
 
-There is also a web upload form at `https://$EDA_FQDN/core/httpproxy/v1/demo-server/upload.html`.
-
 ### Download a file
 
 ```bash
 curl -k https://$EDA_FQDN/core/httpproxy/v1/demo-server/myfile
 ```
 
-Open `https://$EDA_FQDN/core/httpproxy/v1/demo-server/` in a browser to see the list of stored files and click any entry to download it.
+Open `https://$EDA_FQDN/core/httpproxy/v1/demo-server/` in a browser to list stored files, upload from the **Upload** button, download an entry, or delete it.
 
 ## Limitations
 

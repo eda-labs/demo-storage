@@ -13,10 +13,10 @@ $(1)-$(2)-build:
 
 LIST_PACKAGE_OPERATORS += $(1)-$(2)-package
 HELP_TARGETS += $(1)-$(2)-package
-HELP_$(1)-$(2)-package := Build operator container for $(1)/operators/$(2) (vars: REGISTRY, TARGET_IMAGE, DOCKER_BUILD_ARGS)
+HELP_$(1)-$(2)-package := Build operator container for $(1)/operators/$(2) (vars: CONTAINER_TOOL, PLATFORM, REGISTRY, PACKAGE_OPERATION, TARGET_IMAGE, DOCKER_BUILD_ARGS)
 .PHONY: $(1)-$(2)-package
 $(1)-$(2)-package:
-	docker buildx build --platform linux/amd64 -f $(1)/operators/$(2)/Dockerfile --push -t "$(REGISTRY)/$(1)/operators/$(2):latest" $(if $(TARGET_IMAGE),--build-arg TARGET_IMAGE=$(TARGET_IMAGE),) $(DOCKER_BUILD_ARGS) $(1)
+	$(call container-package,$(1)/operators/$(2)/Dockerfile,$(REGISTRY)/$(1)/operators/$(2):latest,$(1))
 endef
 
 # workflows
@@ -32,10 +32,10 @@ $(1)-$(2)-build:
 
 LIST_PACKAGE_WORKFLOWS += $(1)-$(2)-package
 HELP_TARGETS += $(1)-$(2)-package
-HELP_$(1)-$(2)-package := Build and push workflow container for $(1)/workflows/$(2) (vars: REGISTRY, TARGET_IMAGE, DOCKER_BUILD_ARGS)
+HELP_$(1)-$(2)-package := Build workflow container for $(1)/workflows/$(2) (vars: CONTAINER_TOOL, PLATFORM, REGISTRY, PACKAGE_OPERATION, TARGET_IMAGE, DOCKER_BUILD_ARGS)
 .PHONY: $(1)-$(2)-package
 $(1)-$(2)-package:
-	docker buildx build --platform linux/amd64 -f $(1)/workflows/$(2)/Dockerfile --push -t "$(REGISTRY)/$(1)/workflows/$(2):latest" $(if $(TARGET_IMAGE),--build-arg TARGET_IMAGE=$(TARGET_IMAGE),) $(DOCKER_BUILD_ARGS) $(1)
+	$(call container-package,$(1)/workflows/$(2)/Dockerfile,$(REGISTRY)/$(1)/workflows/$(2):latest,$(1))
 endef
 
 # eda-apps

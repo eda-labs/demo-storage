@@ -22,6 +22,17 @@ UNAME ?= $(shell uname)
 OS ?= $(shell echo "$(UNAME)" | tr '[:upper:]' '[:lower:]')
 # Host properties section end
 
+CONTAINER_TOOL ?= docker
+PACKAGE_OPERATION ?= load
+PLATFORM ?= linux/amd64
+
+ifeq ($(CONTAINER_TOOL),podman)
+# $1 Dockerfile, $2 image tag, $3 build context
+container-package = podman build --platform $(PLATFORM) -f $(1) -t "$(2)" $(if $(TARGET_IMAGE),--build-arg TARGET_IMAGE=$(TARGET_IMAGE),) $(DOCKER_BUILD_ARGS) $(3)$(if $(filter push,$(PACKAGE_OPERATION)), && podman push "$(2)",)
+else
+container-package = docker buildx build --platform $(PLATFORM) -f $(1) --$(PACKAGE_OPERATION) -t "$(2)" $(if $(TARGET_IMAGE),--build-arg TARGET_IMAGE=$(TARGET_IMAGE),) $(DOCKER_BUILD_ARGS) $(3)
+endif
+
 # Global lists to hold targets`
 LIST_PUBLISH_APPS=
 LIST_MOD_TIDY=

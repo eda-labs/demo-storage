@@ -21,7 +21,7 @@ spec:
           command:
             - /bin/sh
             - -c
-            - cp /opt/demo-server/upload.html /var/www/files/upload.html && python3 /opt/demo-server/http_server.py
+            - cp /opt/demo-server/index.css /var/www/files/index.css && cp /opt/demo-server/index.js /var/www/files/index.js && python3 /opt/demo-server/http_server.py
           workingDir: /var/www/files
           ports:
             - containerPort: 8080
